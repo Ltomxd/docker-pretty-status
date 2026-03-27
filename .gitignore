@@ -1,0 +1,11 @@
+# dps config (personal, no subir)
+~/.config/dps/
+
+# macOS
+.DS_Store
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
