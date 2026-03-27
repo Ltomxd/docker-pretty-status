@@ -6,10 +6,11 @@
 ![docker](https://img.shields.io/badge/docker-required-blue?style=flat-square&logo=docker)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-```
-<img width="1445" height="196" alt="{9040994B-0302-48D7-B4C6-82996EE2B931}" src="https://github.com/user-attachments/assets/868ca2fe-2fa8-4e55-b5a9-3e69a9720763" />
 
-```
+<img width="1445" height="196" alt="{9040994B-0302-48D7-B4C6-82996EE2B931}" src="https://github.com/user-attachments/assets/cb50b006-dcbc-47bf-81d9-466079b6a7fa" />
+
+
+
 
 ## ✨ Features
 
