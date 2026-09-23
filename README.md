@@ -7,6 +7,7 @@
 ![license](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 ![GitHub stars](https://img.shields.io/github/stars/Ltomxd/docker-pretty-status?style=flat-square)
 ![CI](https://img.shields.io/github/actions/workflow/status/Ltomxd/docker-pretty-status/ci.yml?style=flat-square&label=CI)
+[![npm](https://img.shields.io/npm/v/docker-pretty-status?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/docker-pretty-status)
 
 <!--
   To regenerate this as a real GIF: install https://github.com/charmbracelet/vhs
