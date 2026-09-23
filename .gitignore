@@ -9,3 +9,9 @@
 .idea/
 *.swp
 *.swo
+
+# generated demo GIF / pnpm build artifacts
+demo.gif
+pnpm-package/dps.sh
+pnpm-package/node_modules/
+*.tgz

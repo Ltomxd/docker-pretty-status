@@ -4,16 +4,31 @@
 # ║   github.com/Ltomxd/docker-pretty-status    ║
 # ╚══════════════════════════════════════════════╝
 
-VERSION="1.1.0"
+set -uo pipefail
+
+VERSION="1.2.0"
 CONFIG_DIR="${HOME}/.config/dps"
 CONFIG_FILE="${CONFIG_DIR}/dps.conf"
 
 # ─── Colores ────────────────────────────────────
-R="\033[0m"; B="\033[1m"; DIM="\033[2m"
-GRN="\033[0;92m"; RED="\033[0;91m"; YLW="\033[0;93m"
-CYN="\033[0;96m"; WHT="\033[0;97m"
-BG_HDR="\033[48;5;17m"
-BG_SEL="\033[48;5;238m"
+NO_COLOR_MODE=0
+[[ -n "${NO_COLOR:-}" || ! -t 1 ]] && NO_COLOR_MODE=1
+
+set_colors() {
+  if [[ $NO_COLOR_MODE -eq 1 ]]; then
+    R=""; B=""; DIM=""
+    GRN=""; RED=""; YLW=""
+    CYN=""; WHT=""
+    BG_HDR=""; BG_SEL=""
+  else
+    R="\033[0m"; B="\033[1m"; DIM="\033[2m"
+    GRN="\033[0;92m"; RED="\033[0;91m"; YLW="\033[0;93m"
+    CYN="\033[0;96m"; WHT="\033[0;97m"
+    BG_HDR="\033[48;5;17m"
+    BG_SEL="\033[48;5;238m"
+  fi
+}
+set_colors
 
 # ─── Caja ───────────────────────────────────────
 HH="═"; V="║"
@@ -44,9 +59,6 @@ visual_len() {
       (( i++ ))
     elif (( code < 0xE0 )); then
       # 2-byte UTF-8
-      local ch="${s:$i:2}"
-      local cp
-      cp=$(printf '%s' "$ch" | iconv -f UTF-8 -t UTF-32BE 2>/dev/null | od -An -tu4 | tr -d ' \n' || echo 0)
       (( len++ )); (( i+=2 ))
     elif (( code < 0xF0 )); then
       # 3-byte UTF-8 (CJK y emojis simples)
@@ -107,6 +119,12 @@ trunc_to() {
 init_config() {
   mkdir -p "$CONFIG_DIR"
   if [[ ! -f "$CONFIG_FILE" ]]; then
+    if [[ ! -t 0 ]]; then
+      # Sin TTY (pipes, cron, CI): no se puede preguntar, usar inglés por defecto
+      echo "LANG_DPS=en" > "$CONFIG_FILE"
+      source "$CONFIG_FILE"
+      return
+    fi
     clear
     printf '\n%b  ╔══════════════════════════════════════╗\n' "${B}${CYN}"
     printf '  ║  dps  Docker Pretty Status v%s     ║\n' "$VERSION"
@@ -258,15 +276,25 @@ cell_ansi() {
 #  DATOS
 # ─────────────────────────────────────────────────
 FILTER_RUNNING=0; FILTER_NAME=""; FILTER_IMAGE=""; SHOW_STATS=1
+GROUP_COMPOSE=0; CPU_ALERT=80
 declare -A STATS_CPU=() STATS_MEM=()
 
 get_containers() {
-  local fmt="{{.ID}}|{{.Names}}|{{.Image}}|{{.RunningFor}}|{{.Status}}|{{.Ports}}"
+  local fmt="{{.ID}}|{{.Names}}|{{.Image}}|{{.RunningFor}}|{{.Status}}|{{.Ports}}|{{.Label \"com.docker.compose.project\"}}"
   local args=()
   [[ $FILTER_RUNNING -eq 1 ]] && args+=(--filter "status=running")
   [[ -n "$FILTER_NAME"  ]] && args+=(--filter "name=${FILTER_NAME}")
   [[ -n "$FILTER_IMAGE" ]] && args+=(--filter "ancestor=${FILTER_IMAGE}")
   docker ps -a "${args[@]}" --format "$fmt" 2>/dev/null || true
+}
+
+# Reordena las líneas agrupando por proyecto de docker compose
+# (contenedores sin proyecto van al final bajo "standalone")
+group_by_project() {
+  local data="$1"
+  printf '%s\n' "$data" | awk -F'|' '{ key = ($7=="") ? "~standalone" : $7; print key "\t" $0 }' \
+    | sort -t $'\t' -k1,1 \
+    | cut -f2-
 }
 
 fetch_stats() {
@@ -302,7 +330,7 @@ calc_widths() {
   local MIN_STAT=8  MIN_CPU=4  MIN_MEM=6  MIN_PORT=6
 
   # Medir datos
-  while IFS='|' read -r id name image age status ports; do
+  while IFS='|' read -r id name image age status ports project; do
     local pc; pc=$(clean_ports "$ports")
     local cpu="${STATS_CPU[$name]:-}"; local mem="${STATS_MEM[$name]:-}"
     local stat_txt
@@ -397,11 +425,29 @@ render_table() {
   hline "$ML" "$MX" "$HH" "$MR" "${WW[@]}"
 
   # Filas de datos
-  local idx=0 first=1
-  while IFS='|' read -r id name image age status ports; do
+  local idx=0 first=1 last_project=""
+  while IFS='|' read -r id name image age status ports project; do
+    if [[ $GROUP_COMPOSE -eq 1 ]]; then
+      local proj_label="${project:-standalone}"
+      if [[ "$proj_label" != "$last_project" ]]; then
+        [[ $first -eq 0 ]] && thin_hline "${WW[@]}"
+        local inner=0 wi wfirst=1
+        for wi in "${WW[@]}"; do
+          inner=$(( inner + wi + 2 ))
+          [[ $wfirst -eq 0 ]] && inner=$(( inner + 1 ))
+          wfirst=0
+        done
+        local proj_cell; proj_cell=$(pad_to "📦 ${proj_label}" $(( inner - 1 )))
+        printf '%b%s%b %b%b%s%b%b%s%b\n' \
+          "${CYN}" "${V}" "${R}" "${DIM}${CYN}" "" "$proj_cell" "${R}" \
+          "${CYN}" "${V}" "${R}"
+        last_project="$proj_label"
+        first=1
+      fi
+    fi
     [[ $first -eq 0 ]] && thin_hline "${WW[@]}"
 
-    local stat_d cpu_d mem_d port_d RC SEL
+    local stat_d cpu_d mem_d port_d RC SEL CPU_C cpu_num
     stat_d=$(status_fmt "$status")
     cpu_d="${STATS_CPU[$name]:-0.00%}"
     mem_d="${STATS_MEM[$name]:-—}"
@@ -409,13 +455,20 @@ render_table() {
     RC=$(row_color "$status")
     (( idx == selected )) && SEL="${BG_SEL}" || SEL=""
 
+    cpu_num="${cpu_d%\%}"
+    if [[ "$cpu_num" =~ ^[0-9]+([.][0-9]+)?$ ]] && (( $(printf '%.0f' "$cpu_num") >= CPU_ALERT )); then
+      CPU_C="${RED}"
+    else
+      CPU_C="${GRN}"
+    fi
+
     printf '%b%s%b' "${CYN}" "${V}" "${R}"
     cell        "$id"     $W_ID   "$RC" "$SEL"
     cell        "$name"   $W_NAME "$RC" "$SEL"
     cell        "$image"  $W_IMG  "$RC" "$SEL"
     cell        "$age"    $W_AGE  "$RC" "$SEL"
     cell_ansi   "$stat_d" $W_STAT        "$SEL"
-    cell        "$cpu_d"  $W_CPU  "${GRN}" "$SEL"
+    cell        "$cpu_d"  $W_CPU  "$CPU_C" "$SEL"
     cell        "$mem_d"  $W_MEM  "${YLW}" "$SEL"
     cell        "$port_d" $W_PORT "$RC" "$SEL"
     echo ""
@@ -431,10 +484,30 @@ render_table() {
 # ─────────────────────────────────────────────────
 #  MODOS
 # ─────────────────────────────────────────────────
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+mode_json() {
+  local data; data=$(get_containers)
+  [[ $SHOW_STATS -eq 1 ]] && fetch_stats
+  local first=1
+  printf '[\n'
+  while IFS='|' read -r id name image age status ports project; do
+    [[ -z "$id" ]] && continue
+    [[ $first -eq 0 ]] && printf ',\n'
+    first=0
+    printf '  {"id": "%s", "name": "%s", "image": "%s", "age": "%s", "status": "%s", "ports": "%s", "project": "%s", "cpu": "%s", "mem": "%s"}' \
+      "$(json_escape "$id")" "$(json_escape "$name")" "$(json_escape "$image")" \
+      "$(json_escape "$age")" "$(json_escape "$status")" "$(json_escape "$(clean_ports "$ports")")" \
+      "$(json_escape "$project")" "$(json_escape "${STATS_CPU[$name]:-}")" "$(json_escape "${STATS_MEM[$name]:-}")"
+  done <<< "$data"
+  printf '\n]\n'
+}
+
 mode_once() {
   local data; data=$(get_containers)
   [[ -z "$data" ]] && { printf '\n  %b%s%b\n\n' "${YLW}" "$T_EMPTY" "${R}"; exit 0; }
   [[ $SHOW_STATS -eq 1 ]] && fetch_stats
+  [[ $GROUP_COMPOSE -eq 1 ]] && data=$(group_by_project "$data")
   calc_widths "$data"
   render_table "$data" -1
 }
@@ -446,6 +519,7 @@ mode_watch() {
   while true; do
     local data; data=$(get_containers)
     [[ $SHOW_STATS -eq 1 ]] && fetch_stats
+    [[ $GROUP_COMPOSE -eq 1 && -n "$data" ]] && data=$(group_by_project "$data")
     [[ -n "$data" ]] && calc_widths "$data"
     clear
     if [[ -z "$data" ]]; then
@@ -454,6 +528,33 @@ mode_watch() {
       render_table "$data" -1
     fi
     printf '  %b%s · refresh %ss%b\n' "${DIM}" "$T_WATCH_HINT" "$interval" "${R}"
+    sleep "$interval"
+  done
+  tput cnorm
+}
+
+mode_top() {
+  local interval="${1:-2}"
+  trap 'tput cnorm; echo ""; exit 0' INT TERM
+  tput civis
+  while true; do
+    local data; data=$(get_containers)
+    fetch_stats
+    if [[ -n "$data" ]]; then
+      data=$(printf '%s\n' "$data" | while IFS='|' read -r id name image age status ports project; do
+        local cpu="${STATS_CPU[$name]:-0%}"; cpu="${cpu%\%}"
+        [[ "$cpu" =~ ^[0-9]+([.][0-9]+)?$ ]] || cpu=0
+        printf '%s\t%s|%s|%s|%s|%s|%s|%s\n' "$cpu" "$id" "$name" "$image" "$age" "$status" "$ports" "$project"
+      done | sort -t $'\t' -k1,1 -rn | cut -f2-)
+      calc_widths "$data"
+    fi
+    clear
+    if [[ -z "$data" ]]; then
+      printf '\n  %b%s%b\n\n' "${YLW}" "$T_EMPTY" "${R}"
+    else
+      render_table "$data" -1
+    fi
+    printf '  %b%s · sorted by CPU · refresh %ss%b\n' "${DIM}" "$T_WATCH_HINT" "$interval" "${R}"
     sleep "$interval"
   done
   tput cnorm
@@ -479,6 +580,7 @@ mode_interactive() {
   _refresh() {
     data=$(get_containers); names=()
     [[ $SHOW_STATS -eq 1 ]] && fetch_stats
+    [[ $GROUP_COMPOSE -eq 1 && -n "$data" ]] && data=$(group_by_project "$data")
     if [[ -n "$data" ]]; then
       calc_widths "$data"
       while IFS='|' read -r _ name _rest; do names+=("$name"); done <<< "$data"
@@ -504,6 +606,7 @@ mode_interactive() {
   _confirm() {
     local prompt="$1"
     tput cup $(( $(tput lines)-2 )) 0
+    tput el
     printf '%b' "${R}"
     printf "$prompt"
     tput cnorm; local ans; read -r ans; tput civis
@@ -566,6 +669,7 @@ usage() {
   printf 'Usage:\n'
   printf '  dps                    Show table\n'
   printf '  dps watch [secs]       Auto-refresh (default 2s)\n'
+  printf '  dps top [secs]         Live view sorted by CPU usage\n'
   printf '  dps -i                 Interactive TUI\n'
   printf '  dps logs <name>        Stream logs\n'
   printf '  dps stop <name>        Stop container\n'
@@ -574,6 +678,11 @@ usage() {
   printf '  dps config             Change language\n\n'
   printf 'Filters:\n'
   printf '  --running  --name <p>  --image <i>  --no-stats\n\n'
+  printf 'Output:\n'
+  printf '  --json                 Print machine-readable JSON and exit\n'
+  printf '  --group                Group containers by docker-compose project\n'
+  printf '  --cpu-alert <pct>      Highlight CPU usage over this %% in red (default 80)\n'
+  printf '  --no-color             Disable ANSI colors (also via NO_COLOR env var)\n\n'
 }
 
 # ─────────────────────────────────────────────────
@@ -583,11 +692,13 @@ main() {
   init_config
   load_strings
 
-  local MODE="once" WATCH_INT=2 SUBCMD="" SUBCMD_ARG=""
+  local MODE="once" WATCH_INT=2 SUBCMD="" SUBCMD_ARG="" JSON_OUT=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       watch)        MODE="watch"
+                    [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]] && { WATCH_INT=$2; shift; } ;;
+      top)          MODE="top"
                     [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]] && { WATCH_INT=$2; shift; } ;;
       interactive|-i) MODE="interactive" ;;
       logs)         SUBCMD="logs";    [[ $# -gt 1 ]] && { SUBCMD_ARG=$2; shift; } ;;
@@ -599,6 +710,10 @@ main() {
       --name)       [[ $# -gt 1 ]] && { FILTER_NAME=$2;  shift; } ;;
       --image)      [[ $# -gt 1 ]] && { FILTER_IMAGE=$2; shift; } ;;
       --no-stats)   SHOW_STATS=0 ;;
+      --json)       JSON_OUT=1 ;;
+      --group)      GROUP_COMPOSE=1 ;;
+      --cpu-alert)  [[ $# -gt 1 ]] && { CPU_ALERT=$2; shift; } ;;
+      --no-color)   NO_COLOR_MODE=1; set_colors ;;
       --version|-v) echo "dps v${VERSION}"; exit 0 ;;
       --help|-h)    usage; exit 0 ;;
       *) printf '%bUnknown: %s%b\n' "${RED}" "$1" "${R}" >&2; usage; exit 1 ;;
@@ -616,9 +731,15 @@ main() {
     return
   fi
 
+  if [[ $JSON_OUT -eq 1 ]]; then
+    mode_json
+    return
+  fi
+
   case "$MODE" in
     once)        mode_once ;;
     watch)       mode_watch "$WATCH_INT" ;;
+    top)         mode_top "$WATCH_INT" ;;
     interactive) mode_interactive ;;
   esac
 }

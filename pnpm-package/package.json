@@ -1,0 +1,29 @@
+{
+  "name": "docker-pretty-status",
+  "version": "1.2.0",
+  "description": "A colorful, interactive replacement for docker ps — CPU/MEM stats, TUI navigation, compose grouping.",
+  "keywords": ["docker", "cli", "tui", "devtools", "docker-ps", "terminal"],
+  "homepage": "https://github.com/Ltomxd/docker-pretty-status",
+  "bugs": "https://github.com/Ltomxd/docker-pretty-status/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ltomxd/docker-pretty-status.git"
+  },
+  "license": "MIT",
+  "author": "Ltomxd",
+  "bin": {
+    "dps": "bin/dps.js"
+  },
+  "files": [
+    "bin/dps.js",
+    "dps.sh"
+  ],
+  "os": ["linux", "darwin"],
+  "engines": {
+    "node": ">=14"
+  },
+  "scripts": {
+    "prepack": "cp ../dps.sh ./dps.sh && chmod +x ./dps.sh bin/dps.js"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

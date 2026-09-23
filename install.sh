@@ -43,7 +43,8 @@ fi
 chmod +x "$TMP"
 mv "$TMP" "${INSTALL_DIR}/${SCRIPT_NAME}"
 
-success "Downloaded dps v$(${INSTALL_DIR}/${SCRIPT_NAME} --version 2>/dev/null | awk '{print $2}' || echo '?')"
+INSTALLED_VERSION=$(grep -m1 '^VERSION=' "${INSTALL_DIR}/${SCRIPT_NAME}" | cut -d'"' -f2)
+success "Downloaded dps v${INSTALLED_VERSION:-?}"
 
 # ── Agregar al PATH si hace falta ───────────────
 add_to_path() {
