@@ -6,7 +6,7 @@ Set Width 1200
 Set Height 650
 Set Theme "Dracula"
 
-Type "dps -i"
+Type "cd ~/descargas/docker-pretty-status && ./dps.sh -i"
 Enter
 Sleep 2s
 
